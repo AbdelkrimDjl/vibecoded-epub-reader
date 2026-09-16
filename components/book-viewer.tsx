@@ -24,6 +24,7 @@ export function BookViewer({ book, onFiles }: BookViewerProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const bookRef = useRef<EpubBook | null>(null);
   const renditionRef = useRef<Rendition | null>(null);
+  const renderSectionRef = useRef<((index: number, message?: string, target?: string) => Promise<void>) | null>(null);
   const currentIndexRef = useRef(0);
   const firstReadableIndexRef = useRef(0);
   const fontSizeRef = useRef(18);
@@ -76,6 +77,32 @@ export function BookViewer({ book, onFiles }: BookViewerProps) {
       await contents.document.fonts.ready;
       contents.document.documentElement.style.overflowX = "hidden";
       body.style.overflowX = "hidden";
+      contents.document.addEventListener("click", (event) => {
+        const targetElement = (event.target as HTMLElement | null)?.closest<HTMLAnchorElement>("a[href]") ?? null;
+        const href = targetElement?.getAttribute("href");
+        if (!targetElement || !href || href.startsWith("#") && !href.slice(1)) return;
+        if (/^[a-z][a-z\d+.-]*:/i.test(href) && !href.startsWith("#")) return;
+
+        const [hrefPath, fragment] = href.split("#", 2);
+        const currentHref = epub.spine.items[index].href;
+        const resolvedPath = hrefPath
+          ? new URL(hrefPath, `https://epub.local/${currentHref}`).pathname.replace(/^\/+/, "")
+          : currentHref;
+        const normalizeHref = (value: string) => {
+          try { return decodeURIComponent(value).replaceAll("\\", "/").toLowerCase(); } catch { return value.replaceAll("\\", "/").toLowerCase(); }
+        };
+        const normalizedTarget = normalizeHref(resolvedPath);
+        const targetIndex = epub.spine.items.findIndex((item) => {
+          const candidate = normalizeHref(item.href);
+          return candidate === normalizedTarget || candidate.endsWith(`/${normalizedTarget}`) || normalizedTarget.endsWith(`/${candidate}`);
+        });
+        if (targetIndex < 0) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        const targetHref = `${epub.spine.items[targetIndex].href}${fragment ? `#${fragment}` : ""}`;
+        void renderSectionRef.current?.(targetIndex, "Moved to linked section.", targetHref);
+      }, true);
     });
     rendition.themes.default({
       body: {
@@ -125,6 +152,10 @@ export function BookViewer({ book, onFiles }: BookViewerProps) {
       setStatus("Could not open this section.");
     }
   }, []);
+
+  useEffect(() => {
+    renderSectionRef.current = renderSection;
+  }, [renderSection]);
 
   useEffect(() => {
     let cancelled = false;
