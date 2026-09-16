@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BookDropZone } from "@/components/book-drop-zone";
 import { BookViewer } from "@/components/book-viewer";
 
@@ -18,6 +18,28 @@ export default function EpubReader() {
     setSelected(epubFiles[0]);
     setStatus("Opening book…");
   };
+
+  useEffect(() => {
+    const filePath = new URLSearchParams(window.location.search).get("file");
+    if (!filePath) return;
+
+    let cancelled = false;
+    const openAssociatedBook = async () => {
+      setStatus("Opening book…");
+      try {
+        const response = await fetch(`/epub?path=${encodeURIComponent(filePath)}`);
+        if (!response.ok) throw new Error("Unable to read EPUB");
+        const blob = await response.blob();
+        const name = filePath.split(/[\\/]/).pop() || "book.epub";
+        if (!cancelled) addFiles([new File([blob], name, { type: "application/epub+zip" })]);
+      } catch {
+        if (!cancelled) setStatus("Could not open the associated EPUB file.");
+      }
+    };
+
+    void openAssociatedBook();
+    return () => { cancelled = true; };
+  }, []);
 
   const scanFolder = async () => {
     const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
