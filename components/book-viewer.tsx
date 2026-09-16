@@ -8,7 +8,7 @@ type Rendition = {
   display: (target?: string | number) => Promise<unknown>;
   destroy: () => void;
   themes: { default: (styles: Record<string, Record<string, string>>) => void; override: (name: string, value: string, priority?: boolean) => void };
-  hooks: { content: { register: (callback: (contents: { document: Document }) => void) => void } };
+  hooks: { content: { register: (callback: (contents: { document: Document }) => void | Promise<void>) => void } };
 };
 type SpineItem = { id?: string; href: string; index?: number };
 type EpubBook = {
@@ -54,7 +54,7 @@ export function BookViewer({ book, onFiles }: BookViewerProps) {
     frameRef.current.replaceChildren();
 
     const rendition = epub.renderTo(frameRef.current, { width: "100%", height: "100%", flow: "scrolled-doc", manager: "default", overflow: "scroll" });
-    rendition.hooks.content.register((contents) => {
+    rendition.hooks.content.register(async (contents) => {
       const rootStyles = getComputedStyle(document.documentElement);
       const body = contents.document.body;
       const usesBookFont = fontFamilyRef.current === "book";
@@ -67,7 +67,13 @@ export function BookViewer({ book, onFiles }: BookViewerProps) {
       const typesetStylesheet = contents.document.createElement("link");
       typesetStylesheet.rel = "stylesheet";
       typesetStylesheet.href = "/typeset.css";
+      const stylesheetReady = new Promise<void>((resolve) => {
+        typesetStylesheet.addEventListener("load", () => resolve(), { once: true });
+        typesetStylesheet.addEventListener("error", () => resolve(), { once: true });
+      });
       contents.document.head.append(typesetStylesheet);
+      await stylesheetReady;
+      await contents.document.fonts.ready;
       contents.document.documentElement.style.overflowX = "hidden";
       body.style.overflowX = "hidden";
     });
@@ -92,31 +98,24 @@ export function BookViewer({ book, onFiles }: BookViewerProps) {
       const fragment = target?.split("#")[1];
       const displayTarget = fragment ? `${epub.spine.items[index].href}#${fragment}` : index;
       await rendition.display(displayTarget);
-      if (fragment && frameRef.current) {
-        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      if (frameRef.current) {
         const iframe = frameRef.current.querySelector<HTMLIFrameElement>("iframe");
         const contentDocument = iframe?.contentDocument;
         if (contentDocument) {
           let decodedFragment = fragment;
-          try { decodedFragment = decodeURIComponent(fragment); } catch { /* Keep the original fragment when it is not URI-encoded. */ }
-          let anchor = contentDocument.getElementById(decodedFragment);
-          if (!anchor) anchor = contentDocument.getElementsByName(decodedFragment)[0] ?? null;
+          if (decodedFragment) {
+            try { decodedFragment = decodeURIComponent(decodedFragment); } catch { /* Keep the original fragment when it is not URI-encoded. */ }
+          }
+          let anchor = decodedFragment ? contentDocument.getElementById(decodedFragment) : null;
+          if (!anchor && decodedFragment) anchor = contentDocument.getElementsByName(decodedFragment)[0] ?? null;
           if (!anchor && targetLabel) {
             const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
             const expectedLabel = normalizeText(targetLabel);
             anchor = Array.from(contentDocument.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6"))
               .find((heading) => normalizeText(heading.textContent ?? "") === expectedLabel) ?? null;
           }
-          const scrollContainer = frameRef.current.querySelector<HTMLElement>(".epub-container") ?? frameRef.current;
-          if (anchor && scrollContainer && iframe) {
-            const containerRect = scrollContainer.getBoundingClientRect();
-            const iframeRect = iframe.getBoundingClientRect();
-            const anchorRect = anchor.getBoundingClientRect();
-            const iframeScrollTop = contentDocument.documentElement.scrollTop || contentDocument.body.scrollTop;
-            const targetTop = scrollContainer.scrollTop + iframeRect.top - containerRect.top + iframeScrollTop + anchorRect.top - 24;
-            const maximumScrollTop = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-            scrollContainer.scrollTo({ top: Math.max(0, Math.min(targetTop, maximumScrollTop)), behavior: "auto" });
-          }
+          const anchorId = anchor?.id || anchor?.getAttribute("name");
+          if (anchorId) await rendition.display(`${epub.spine.items[index].href}#${encodeURIComponent(anchorId)}`);
         }
       }
       setStatus(message);
