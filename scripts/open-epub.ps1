@@ -7,10 +7,13 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $serverScript = Join-Path $projectRoot "scripts\local-epub-server.mjs"
 $resolvedFile = (Resolve-Path -LiteralPath $FilePath -ErrorAction Stop).Path
 
-if (-not (Get-NetTCPConnection -LocalAddress "127.0.0.1" -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)) {
+if (-not (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)) {
   $node = (Get-Command node.exe -ErrorAction Stop).Source
-  Start-Process -WindowStyle Hidden -FilePath $node -ArgumentList @($serverScript) -WorkingDirectory $projectRoot
-  Start-Sleep -Milliseconds 1200
+  Start-Process -WindowStyle Hidden -FilePath $node -ArgumentList @((('"{0}"' -f $serverScript))) -WorkingDirectory $projectRoot
+  for ($attempt = 0; $attempt -lt 20; $attempt++) {
+    Start-Sleep -Milliseconds 150
+    if (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue) { break }
+  }
 }
 
 $encodedPath = [Uri]::EscapeDataString($resolvedFile)
